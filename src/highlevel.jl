@@ -94,7 +94,7 @@ rocconvert(arg, managed::Vector{Managed}=Managed[]) =
     adapt(Runtime.Adaptor(managed), arg)
 
 const MACRO_KWARGS = [:launch]
-const COMPILER_KWARGS = [:name, :unsafe_fp_atomics, :wavefrontsize64]
+const COMPILER_KWARGS = [:name, :unsafe_fp_atomics, :wavefrontsize64, :group_size]
 const LAUNCH_KWARGS = [:gridsize, :groupsize, :shmem, :stream, :cooperative]
 
 """
