@@ -7,6 +7,14 @@ struct HIPCompilerParams <: AbstractCompilerParams
     # a hardware RMW instruction that is faster than emulating
     # the atomic operation using an atomic compare-and-swap (CAS) loop.
     unsafe_fp_atomics::Bool
+    # The exact workgroup size, in workitems, that this kernel is always
+    # launched with, or 0 if unknown. Without it the backend must assume the
+    # 1024-workitem maximum is resident and caps the kernel's VGPR budget
+    # accordingly (1024 workitems = 16 wave64s over 4 SIMDs = 4 waves per
+    # SIMD, so 512/4 = 128 VGPRs), which forces register-hungry kernels
+    # launched with smaller groups to spill to scratch. Declaring it is only
+    # valid if every launch of this compiled kernel uses this size.
+    group_size::Int
 end
 
 const HIPCompilerConfig = CompilerConfig{GCNCompilerTarget, HIPCompilerParams}
@@ -107,6 +115,10 @@ function GPUCompiler.finish_module!(
         push!(attrs, target_cpu_attr)
         push!(attrs, target_features_attr)
         push!(attrs, atomic_attr)
+        if job.config.params.group_size > 0
+            n = job.config.params.group_size
+            push!(attrs, StringAttribute("amdgpu-flat-work-group-size", "$n,$n"))
+        end
     end
 
     # Workaround for the lack of zeroinitializer support for LDS.
@@ -177,6 +189,7 @@ end
 function _compiler_config(dev::HIP.HIPDevice;
     name::Union{String, Nothing} = nothing, kernel::Bool = true,
     unsafe_fp_atomics::Bool = true, wavefrontsize64::Bool = HIP.wavefrontsize(dev) == 64,
+    group_size::Integer = 0,
 )
     dev_isa, features = parse_llvm_features(HIP.gcn_arch(dev))
     if !isempty(features)
@@ -190,7 +203,7 @@ function _compiler_config(dev::HIP.HIPDevice;
     end
 
     target = GCNCompilerTarget(; dev_isa, features)
-    params = HIPCompilerParams(wavefrontsize64, unsafe_fp_atomics)
+    params = HIPCompilerParams(wavefrontsize64, unsafe_fp_atomics, Int(group_size))
     CompilerConfig(target, params; kernel, name, always_inline=true)
 end
 
@@ -213,6 +226,20 @@ The following kwargs are supported:
     On single- or double-precision floating-point values this may generate
     a hardware RMW instruction that is faster than emulating
     the atomic operation using an atomic compare-and-swap (CAS) loop.
+- `group_size::Integer = 0`:
+    The exact workgroup size, in workitems, that this kernel will be launched
+    with; `0` leaves it unspecified.
+
+    Declaring it lets the backend size the kernel's register budget for the
+    occupancy it actually runs at. Without it, the backend must assume a
+    workgroup may be as large as the 1024-workitem maximum, which caps the
+    kernel at 128 VGPRs and makes register-hungry kernels spill to scratch
+    even when they are always launched with a smaller group.
+
+    This is a promise, not a hint: it is only valid if *every* launch of the
+    resulting kernel uses this workgroup size. Launching with a larger group
+    is undefined behaviour. The value participates in the compilation cache
+    key, so kernels declaring different sizes do not alias.
 """
 function hipfunction(f::F, tt::TT = Tuple{}; kwargs...) where {F <: Core.Function, TT}
     Base.@lock hipfunction_lock begin

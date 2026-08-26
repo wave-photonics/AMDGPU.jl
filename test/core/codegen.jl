@@ -61,3 +61,34 @@ end
         end
     end
 end
+
+@testset "group_size sizes the register budget" begin
+    # Without a declared workgroup size the backend must assume a group may be
+    # as large as the 1024-workitem maximum, which caps the kernel at 128 VGPRs
+    # (1024 workitems is 16 wave64s over 4 SIMDs, so 4 waves per SIMD, and
+    # 512 / 4 = 128). A kernel needing more than that then spills to scratch
+    # for an occupancy it never actually runs at. `group_size` states the size
+    # the kernel is really launched with, so the budget matches reality.
+    function scale_kern!(A)
+        i = workitemIdx().x
+        @inbounds A[i] = A[i] * 2
+        return
+    end
+
+    tt = Tuple{AMDGPU.Device.ROCDeviceVector{Float64, AMDGPU.Device.AS.Global}}
+    function gcn(; kwargs...)
+        source = AMDGPU.methodinstance(typeof(scale_kern!), tt)
+        config = AMDGPU.Compiler.compiler_config(
+            AMDGPU.HIP.device(); kernel=true, kwargs...)
+        iob = IOBuffer()
+        AMDGPU.GPUCompiler.code_native(
+            iob, AMDGPU.GPUCompiler.CompilerJob(source, config))
+        String(take!(iob))
+    end
+
+    # the declared size reaches the kernel's metadata, and bounds the register
+    # budget the backend allocates against
+    @test occursin("max_flat_workgroup_size: 256", gcn(group_size=256))
+    # unspecified by default: the backend keeps assuming the 1024 maximum
+    @test occursin("max_flat_workgroup_size: 1024", gcn())
+end
