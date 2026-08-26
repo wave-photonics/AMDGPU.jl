@@ -61,3 +61,28 @@ end
         end
     end
 end
+
+@testset "Reflection accepts compilation keywords" begin
+    # `code_*` forwarded every keyword to GPUCompiler's entry point, so the
+    # ones that configure compilation (the same set `@roc` accepts) arrived
+    # there as unsupported keywords and threw. A kernel therefore could not be
+    # inspected under the configuration it is actually compiled with.
+    function scale_kern!(A)
+        @inbounds A[1] = 2 * A[1]
+        return
+    end
+
+    tt = Tuple{AMDGPU.Device.ROCDeviceVector{Float32, AMDGPU.Device.AS.Global}}
+    function gcn(; kwargs...)
+        iob = IOBuffer()
+        AMDGPU.code_gcn(iob, scale_kern!, tt; kernel=true, kwargs...)
+        String(take!(iob))
+    end
+
+    # a compilation keyword is accepted, and reaches the configuration
+    @test occursin("renamed_by_kwarg", gcn(name="renamed_by_kwarg"))
+    @test !occursin("renamed_by_kwarg", gcn())
+    @test gcn(unsafe_fp_atomics=false) isa String
+    # reflection's own keywords keep working
+    @test gcn(raw=true) isa String
+end
