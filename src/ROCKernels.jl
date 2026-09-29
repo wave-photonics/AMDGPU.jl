@@ -104,7 +104,13 @@ function threads_to_workgroupsize(threads, ndrange)
     end
 end
 
-function (obj::KA.Kernel{ROCBackend})(args...; ndrange=nothing, workgroupsize=nothing)
+# Defined as the `Core.kwcall` method a keyword call lowers to, instead of with keyword-argument
+# syntax, whose generated wrapper would splat `args` (see `AMDGPU.Runtime.roccall`).
+(obj::KA.Kernel{ROCBackend})(args::Vararg{Any, N}) where N = launch(obj, args)
+Core.kwcall(kwargs::NamedTuple, obj::KA.Kernel{ROCBackend}, args::Vararg{Any, N}) where N =
+    launch(obj, args; kwargs...)
+
+function launch(obj::KA.Kernel{ROCBackend}, args::Tuple; ndrange=nothing, workgroupsize=nothing)
     ndrange, new_workgroupsize, iterspace, dynamic = KA.launch_config(obj, ndrange, workgroupsize)
     ctx = KA.mkcontext(obj, ndrange, iterspace)
     if KA.workgroupsize(obj) <: KA.StaticSize

@@ -58,9 +58,16 @@ end
     end
 end
 
-function (ker::HIPKernel{F, TT})(
-    args::Vararg{Any, N}; stream::HIP.HIPStream = AMDGPU.stream(), call_kwargs...,
-) where {F, TT, N}
+# `kernel(args...; kwargs...)` lowers to `Core.kwcall(kwargs, kernel, args...)`, and that method is
+# defined here directly: with keyword-argument syntax, the wrapper Julia generates would splat `args`
+# (see `roccall`).
+(ker::HIPKernel)(args::Vararg{Any, N}) where N = launch_kernel(ker, args)
+Core.kwcall(kwargs::NamedTuple, ker::HIPKernel, args::Vararg{Any, N}) where N =
+    launch_kernel(ker, args; kwargs...)
+
+function launch_kernel(
+    ker::HIPKernel, args::Tuple; stream::HIP.HIPStream = AMDGPU.stream(), call_kwargs...,
+)
     # Check if previous kernels threw an exception.
     AMDGPU.throw_if_exception(stream.device)
     GC.@preserve args begin
