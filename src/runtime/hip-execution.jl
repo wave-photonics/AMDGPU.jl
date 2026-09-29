@@ -54,7 +54,7 @@ end
     # finalize types
     call_tt = Base.to_tuple_type(call_t)
     quote
-        roccall_tuple(kernel.fun, $call_tt, ($(call_args...),); stream, call_kwargs...)
+        roccall(kernel.fun, $call_tt, ($(call_args...),); stream, call_kwargs...)
     end
 end
 
@@ -92,10 +92,11 @@ end
     return ex
 end
 
-roccall(fun::F, tt::Type{T}, args::Vararg{Any, N}; kwargs...) where {F, T, N} = roccall_tuple(fun, tt, args; kwargs...)
-
-function roccall_tuple(fun::F, tt::Type{T}, args::Tuple; kwargs...) where {F, T}
-    cvt_fn = pointers -> launch_tuple(fun, pointers; kwargs...)
+# `roccall` and `launch` take the kernel arguments as a tuple, which is passed on and never splatted:
+# a splat of more than 32 elements is not turned into a direct call (`max_tuple_splat`) and boxes every
+# argument. A `Vararg` signature would not avoid it: the keyword-argument wrapper splats the arguments.
+function roccall(fun::F, tt::Type{T}, args::Tuple; kwargs...) where {F, T}
+    cvt_fn = pointers -> launch(fun, pointers; kwargs...)
     convert_arguments(cvt_fn, tt, args)
 end
 
@@ -107,11 +108,7 @@ end
     end
 end
 
-launch(fun::HIP.HIPFunction, args::Vararg{Any, N}; kwargs...) where N = launch_tuple(fun, args; kwargs...)
-
-# the argument tuple is passed, never splatted: inference gives up on splats of more than 32
-# elements (`max_tuple_splat`), and boxes every argument of such a call
-function launch_tuple(
+function launch(
     fun::HIP.HIPFunction, args::Tuple;
     gridsize = 1, groupsize = 1,
     shmem::Integer = 0, stream::HIP.HIPStream,
